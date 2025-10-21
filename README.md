@@ -8,10 +8,48 @@
 
 This repository accompanies our research paper titled "[Generative Agents: Interactive Simulacra of Human Behavior](https://arxiv.org/abs/2304.03442)." It contains our core simulation module for  generative agents—computational agents that simulate believable human behaviors—and their game environment. Below, we document the steps for setting up the simulation environment on your local machine and for replaying the simulation as a demo animation.
 
-## <img src="https://joonsungpark.s3.amazonaws.com:443/static/assets/characters/profile/Isabella_Rodriguez.png" alt="Generative Isabella">   Setting Up the Environment 
-To set up your environment, you will need to generate a `utils.py` file that contains your OpenAI API key and download the necessary packages.
+## 🚀 Modernization Updates (This Fork)
 
-### Step 1. Generate Utils File
+This fork has been updated with the following improvements:
+
+- **GPT-5-nano**: Upgraded to use the latest and most cost-efficient model (`gpt-5-nano-2025-08-07`)
+  - Cost: $0.05 per 1M input tokens, $0.40 per 1M output tokens
+  - 60x cheaper than GPT-4, 15x cheaper than GPT-3.5-turbo
+- **Responses API**: Migrated from legacy Chat Completions API to modern Responses API
+- **Minimal Reasoning**: Configured for ultra-low latency and minimal reasoning tokens
+- **Structured Outputs**: Uses JSON Schema validation for reliable, type-safe responses
+- **OpenAI SDK v2+**: Updated to latest OpenAI Python library (v2.5.0+)
+- **Secure Configuration**: API keys stored in `.env` file (not committed to git)
+- **Python dotenv**: Environment variable management with python-dotenv
+
+### Testing
+Run the included test suite to verify your setup:
+```bash
+python test_gpt5_nano.py
+```
+
+## <img src="https://joonsungpark.s3.amazonaws.com:443/static/assets/characters/profile/Isabella_Rodriguez.png" alt="Generative Isabella">   Setting Up the Environment
+To set up your environment, you will need to configure your OpenAI API key and download the necessary packages.
+
+> **⚠️ IMPORTANT SECURITY NOTE**: This fork has been modernized to use GPT-5-nano with the Responses API. Your API key is stored in a `.env` file which is in `.gitignore` and will **NOT** be committed to git. Never commit your `.env` file or share your API key publicly!
+
+### Step 1a. Configure OpenAI API Key (New Method - Recommended)
+This fork uses a `.env` file for secure API key management:
+
+1. Copy the example environment file:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Edit `.env` and add your OpenAI API key:
+   ```bash
+   # .env file
+   OPENAI_API_KEY=your-actual-api-key-here
+   ```
+
+3. Get your API key from: https://platform.openai.com/api-keys
+
+### Step 1b. Generate Utils File (Legacy Method)
 In the `reverie/backend_server` folder (where `reverie.py` is located), create a new file titled `utils.py` and copy and paste the content below into the file:
 ```
 # Copy and paste your OpenAI API Key
@@ -28,7 +66,7 @@ fs_temp_storage = "../../environment/frontend_server/temp_storage"
 
 collision_block_id = "32125"
 
-# Verbose 
+# Verbose
 debug = True
 ```
 Replace `<Your OpenAI API>` with your OpenAI API key, and `<name>` with your name.
