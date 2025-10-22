@@ -17,6 +17,7 @@ from persona.memory_structures.associative_memory import *
 from persona.memory_structures.scratch import *
 from persona.cognitive_modules.retrieve import *
 from persona.prompt_template.run_gpt_prompt import *
+from persona.prompt_template.run_gpt_prompt_v2 import run_gpt_prompt_event_triple_v2
 
 def generate_agent_chat_summarize_ideas(init_persona, 
                                         target_persona, 
@@ -220,7 +221,8 @@ def generate_action_event_triple(act_desp, persona):
     "🧈🍞"
   """
   if debug: print ("GNS FUNCTION: <generate_action_event_triple>")
-  return run_gpt_prompt_event_triple(act_desp, persona)[0]
+  # Use modernized v2 function with structured outputs
+  return run_gpt_prompt_event_triple_v2(act_desp, persona)[0]
 
 
 def generate_poig_score(persona, event_type, description): 

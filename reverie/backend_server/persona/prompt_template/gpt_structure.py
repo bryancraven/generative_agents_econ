@@ -360,14 +360,15 @@ def GPT_request(prompt: str, gpt_parameter: dict) -> str:
     """
     temp_sleep()
     try:
+        # Responses API requires minimum 16 tokens
+        max_tokens = max(16, gpt_parameter.get("max_tokens", 150))
+
         response = client.responses.create(
             model=DEFAULT_MODEL,  # Use GPT-5-nano
             input=prompt,
             reasoning={"effort": "minimal"},
-            text={
-                "verbosity": "low",
-                "max_tokens": gpt_parameter.get("max_tokens", 150)
-            }
+            text={"verbosity": "low"},
+            max_output_tokens=max_tokens
         )
         return response.output_text
     except Exception as e:
@@ -472,7 +473,160 @@ def get_embedding(text: str, model: str = "text-embedding-ada-002") -> list:
 
 
 # ============================================================================
-# #####################[SECTION 4: EXAMPLE USAGE] ############################
+# #####################[SECTION 4: SCHEMA-BASED HELPERS] ####################
+# ============================================================================
+
+def _add_additional_properties_false(schema: dict) -> dict:
+    """
+    Recursively add 'additionalProperties': false to all object types in schema.
+    Required for OpenAI Responses API structured output compliance.
+
+    Args:
+        schema: JSON Schema dict
+
+    Returns:
+        Modified schema with additionalProperties: false
+    """
+    if isinstance(schema, dict):
+        # If this is an object type, add additionalProperties: false
+        if schema.get("type") == "object":
+            schema["additionalProperties"] = False
+
+        # Recursively process all nested schemas
+        for key, value in schema.items():
+            if isinstance(value, dict):
+                schema[key] = _add_additional_properties_false(value)
+            elif isinstance(value, list):
+                schema[key] = [_add_additional_properties_false(item) if isinstance(item, dict) else item
+                               for item in value]
+
+    return schema
+
+
+def ChatGPT_schema_request(
+    prompt: str,
+    schema_class,
+    repeat: int = 3,
+    verbose: bool = False
+):
+    """
+    Request with Pydantic schema validation.
+
+    Args:
+        prompt: User prompt string
+        schema_class: Pydantic BaseModel class for response validation
+        repeat: Number of retry attempts if validation fails
+        verbose: Print debug info
+
+    Returns:
+        Validated Pydantic model instance or False on failure
+    """
+    # Get schema and ensure additionalProperties: false at all levels
+    json_schema = schema_class.model_json_schema()
+    json_schema = _add_additional_properties_false(json_schema)
+
+    for attempt in range(repeat):
+        try:
+            # Get structured response
+            response_text = ChatGPT_structured_request(prompt, json_schema)
+
+            # Validate with Pydantic
+            validated = schema_class.model_validate_json(response_text)
+
+            if verbose:
+                print(f"✓ Validation successful on attempt {attempt + 1}")
+
+            return validated
+
+        except Exception as e:
+            if verbose:
+                print(f"✗ Attempt {attempt + 1} failed: {e}")
+            if attempt == repeat - 1:
+                return False
+
+    return False
+
+
+def GPT_schema_safe_generate(
+    prompt: str,
+    schema_class,
+    repeat: int = 3,
+    fail_safe_response=None,
+    verbose: bool = False
+):
+    """
+    Safe generation with Pydantic schema validation and fail-safe.
+
+    Args:
+        prompt: User prompt string
+        schema_class: Pydantic BaseModel class for response validation
+        repeat: Number of retry attempts
+        fail_safe_response: Response to return on failure (default: False)
+        verbose: Print debug info
+
+    Returns:
+        Validated Pydantic model instance or fail_safe_response on failure
+    """
+    result = ChatGPT_schema_request(prompt, schema_class, repeat, verbose)
+
+    if result is False:
+        if verbose:
+            print("FAIL SAFE TRIGGERED")
+        return fail_safe_response if fail_safe_response is not None else False
+
+    return result
+
+
+def schema_to_legacy_format(schema_response, function_name: str):
+    """
+    Convert schema-based response to legacy format for backward compatibility.
+
+    Args:
+        schema_response: Pydantic model instance
+        function_name: Name of the function (to determine conversion logic)
+
+    Returns:
+        Legacy format (varies by function)
+    """
+    # Task decomposition: [[task, duration], ...]
+    if function_name == "task_decomp":
+        return [[s.description, s.duration_minutes] for s in schema_response.subtasks]
+
+    # Daily plan: [activity_description, ...]
+    elif function_name == "daily_plan":
+        return [f"{a.activity} at {a.time}" for a in schema_response.activities]
+
+    # Hourly schedule: [[activity, duration], ...]
+    elif function_name == "hourly_schedule":
+        return [[a.activity, a.duration_minutes] for a in schema_response.activities]
+
+    # Wake up hour: integer
+    elif function_name == "wake_up_hour":
+        return schema_response.wake_up_hour
+
+    # Keywords: list of strings
+    elif function_name == "extract_keywords":
+        return schema_response.keywords
+
+    # Poignancy: integer rating
+    elif function_name == "poignancy":
+        return schema_response.rating
+
+    # Event triple: [subject, predicate, object]
+    elif function_name == "event_triple":
+        return [schema_response.subject, schema_response.predicate, schema_response.object]
+
+    # Conversation: [[speaker, utterance], ...]
+    elif function_name == "create_conversation":
+        return [[u.speaker, u.utterance] for u in schema_response.conversation]
+
+    # Default: return the model dict
+    else:
+        return schema_response.model_dump()
+
+
+# ============================================================================
+# #####################[SECTION 5: EXAMPLE USAGE] ############################
 # ============================================================================
 
 if __name__ == '__main__':

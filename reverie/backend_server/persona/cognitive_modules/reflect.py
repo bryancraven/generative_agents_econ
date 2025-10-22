@@ -15,6 +15,7 @@ from numpy.linalg import norm
 
 from global_methods import *
 from persona.prompt_template.run_gpt_prompt import *
+from persona.prompt_template.run_gpt_prompt_v2 import run_gpt_prompt_event_triple_v2
 from persona.prompt_template.gpt_structure import *
 from persona.cognitive_modules.retrieve import *
 
@@ -67,7 +68,8 @@ def generate_action_event_triple(act_desp, persona):
     "🧈🍞"
   """
   if debug: print ("GNS FUNCTION: <generate_action_event_triple>")
-  return run_gpt_prompt_event_triple(act_desp, persona)[0]
+  # Use modernized v2 function with structured outputs
+  return run_gpt_prompt_event_triple_v2(act_desp, persona)[0]
 
 
 def generate_poig_score(persona, event_type, description): 

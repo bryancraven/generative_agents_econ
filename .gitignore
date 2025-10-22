@@ -100,3 +100,6 @@ ENV/
 
 # Rope project settings
 .ropeproject
+# Simulation logs
+*.log
+simulation_*.log

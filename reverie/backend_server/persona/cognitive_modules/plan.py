@@ -13,6 +13,13 @@ sys.path.append('../../')
 
 from global_methods import *
 from persona.prompt_template.run_gpt_prompt import *
+from persona.prompt_template.run_gpt_prompt_v2 import (
+    run_gpt_prompt_task_decomp_v2,
+    run_gpt_prompt_event_triple_v2,
+    run_gpt_prompt_action_sector_v2,
+    run_gpt_prompt_action_arena_v2,
+    run_gpt_prompt_action_game_object_v2
+)
 from persona.cognitive_modules.retrieve import *
 from persona.cognitive_modules.converse import *
 
@@ -161,7 +168,8 @@ def generate_task_decomp(persona, task, duration):
 
   """
   if debug: print ("GNS FUNCTION: <generate_task_decomp>")
-  return run_gpt_prompt_task_decomp(persona, task, duration)[0]
+  # Use modernized v2 function with structured outputs (fixes GPT-5-nano compatibility)
+  return run_gpt_prompt_task_decomp_v2(persona, task, duration)[0]
 
 
 def generate_action_sector(act_desp, persona, maze): 
@@ -179,7 +187,8 @@ def generate_action_sector(act_desp, persona, maze):
     "bedroom 2"
   """
   if debug: print ("GNS FUNCTION: <generate_action_sector>")
-  return run_gpt_prompt_action_sector(act_desp, persona, maze)[0]
+  # Use modernized v2 function with structured outputs
+  return run_gpt_prompt_action_sector_v2(act_desp, persona, maze)[0]
 
 
 def generate_action_arena(act_desp, persona, maze, act_world, act_sector): 
@@ -261,7 +270,8 @@ def generate_action_event_triple(act_desp, persona):
     "🧈🍞"
   """
   if debug: print ("GNS FUNCTION: <generate_action_event_triple>")
-  return run_gpt_prompt_event_triple(act_desp, persona)[0]
+  # Use modernized v2 function with structured outputs
+  return run_gpt_prompt_event_triple_v2(act_desp, persona)[0]
 
 
 def generate_act_obj_desc(act_game_object, act_desp, persona): 
