@@ -27,6 +27,14 @@ from persona.cognitive_modules.reflect import *
 from persona.cognitive_modules.execute import *
 from persona.cognitive_modules.converse import *
 
+# CLI UX Enhancement imports
+import sys
+sys.path.append('..')
+from event_bus import (
+    emit_agent_perceived, emit_agent_retrieved, emit_agent_planned,
+    emit_agent_reflected, get_event_bus
+)
+
 class Persona: 
   def __init__(self, name, folder_mem_saved=False):
     # PERSONA BASE STATE 
@@ -216,17 +224,40 @@ class Persona:
       new_day = "New day"
     self.scratch.curr_time = curr_time
 
-    # Main cognitive sequence begins here. 
-    perceived = self.perceive(maze)
-    retrieved = self.retrieve(perceived)
-    plan = self.plan(maze, personas, new_day, retrieved)
-    self.reflect()
+    # Main cognitive sequence begins here.
+    # Check if CLI mode is enabled
+    cli_mode = get_event_bus().is_enabled()
 
-    # <execution> is a triple set that contains the following components: 
+    # Perceive
+    perceived = self.perceive(maze)
+    if cli_mode and perceived:
+      emit_agent_perceived(self.name, perceived)
+
+    # Retrieve
+    retrieved = self.retrieve(perceived)
+    if cli_mode and retrieved:
+      focal_points = [str(key) for key in list(retrieved.keys())[:5]]
+      emit_agent_retrieved(self.name, len(retrieved), focal_points)
+
+    # Plan
+    plan = self.plan(maze, personas, new_day, retrieved)
+    if cli_mode and self.scratch.act_address:
+      emit_agent_planned(
+        self.name,
+        self.scratch.act_address,
+        self.scratch.act_description if hasattr(self.scratch, 'act_description') else '',
+        self.scratch.act_duration if hasattr(self.scratch, 'act_duration') else 0
+      )
+
+    # Reflect
+    self.reflect()
+    # Note: Reflection events are emitted from the reflect module itself
+
+    # <execution> is a triple set that contains the following components:
     # <next_tile> is a x,y coordinate. e.g., (58, 9)
     # <pronunciatio> is an emoji. e.g., "\ud83d\udca4"
-    # <description> is a string description of the movement. e.g., 
-    #   writing her next novel (editing her novel) 
+    # <description> is a string description of the movement. e.g.,
+    #   writing her next novel (editing her novel)
     #   @ double studio:double studio:common room:sofa
     return self.execute(maze, personas, plan)
 

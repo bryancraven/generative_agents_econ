@@ -28,6 +28,69 @@ Run the included test suite to verify your setup:
 python test_gpt5_nano.py
 ```
 
+## 🎨 NEW: Sophisticated CLI UX
+
+This fork now includes a **modern, interactive CLI interface** for monitoring and controlling simulations in real-time!
+
+### Features
+- ✨ **Real-time agent monitoring** - Watch thoughts, actions, and movements live
+- 🎯 **Interactive controls** - Pause, resume, step through with keyboard shortcuts
+- 👥 **Agent focus mode** - Cycle through agents and view detailed cognitive streams
+- ⚡ **High performance** - Built with TypeScript, Ink (React for CLIs), and Bun
+
+### Quick Start
+
+1. **Install Bun** (JavaScript runtime):
+   ```bash
+   curl -fsSL https://bun.sh/install | bash
+   ```
+
+2. **Install CLI dependencies**:
+   ```bash
+   cd cli
+   bun install
+   ```
+
+3. **Run simulation with CLI mode**:
+
+   **Terminal 1** - Environment server:
+   ```bash
+   cd environment/frontend_server
+   python manage.py runserver
+   ```
+
+   **Terminal 2** - Simulation with CLI enabled:
+   ```python
+   cd reverie/backend_server
+   python
+   >>> from reverie import ReverieServer
+   >>> rs = ReverieServer("base_the_ville_isabella_maria_klaus", "test-simulation")
+   >>> rs.enable_cli_mode()  # Enable the new CLI!
+   >>> rs.start_server(1000)
+   ```
+
+   **Terminal 3** - CLI interface:
+   ```bash
+   cd cli
+   bun run src/index.tsx
+   ```
+
+### CLI Keyboard Shortcuts
+- **Space** - Pause/Resume
+- **→** - Step forward
+- **R** - Run 10 steps
+- **S** - Save
+- **Tab** - Switch agent
+- **Q** - Quit
+
+**Full CLI documentation**: See [`cli/README.md`](cli/README.md)
+
+### CLI vs Legacy Mode
+
+The new CLI provides a rich terminal interface with live updates, while the legacy text-based interface remains available as a fallback. Both work with the same simulation backend.
+
+---
+
 ## <img src="https://joonsungpark.s3.amazonaws.com:443/static/assets/characters/profile/Isabella_Rodriguez.png" alt="Generative Isabella">   Setting Up the Environment
 To set up your environment, you will need to configure your OpenAI API key and download the necessary packages.
 

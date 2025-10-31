@@ -35,6 +35,14 @@ from utils import *
 from maze import *
 from persona.persona import *
 
+# CLI UX Enhancement imports
+from event_bus import (
+    get_event_bus, emit_sim_started, emit_sim_step, emit_sim_paused,
+    emit_sim_resumed, emit_agent_moved, EventType
+)
+from ipc_server import get_ipc_server
+from cli_mode import get_execution_controller, ExecutionMode
+
 ##############################################################################
 #                                  REVERIE                                   #
 ##############################################################################
@@ -132,10 +140,16 @@ class ReverieServer:
       self.maze.tiles[p_y][p_x]["events"].add(curr_persona.scratch
                                               .get_curr_event_and_desc())
 
-    # REVERIE SETTINGS PARAMETERS:  
+    # REVERIE SETTINGS PARAMETERS:
     # <server_sleep> denotes the amount of time that our while loop rests each
-    # cycle; this is to not kill our machine. 
+    # cycle; this is to not kill our machine.
     self.server_sleep = 0.1
+
+    # CLI MODE SETTINGS:
+    # <cli_mode> enables the new CLI UX with event emission and IPC
+    self.cli_mode = False
+    self.ipc_server = None
+    self.execution_controller = None
 
     # SIGNALING THE FRONTEND SERVER: 
     # curr_sim_code.json contains the current simulation code, and
@@ -154,14 +168,142 @@ class ReverieServer:
       outfile.write(json.dumps(curr_step, indent=2))
 
 
-  def save(self): 
+  def enable_cli_mode(self):
+    """
+    Enable CLI mode with event emission and IPC server.
+    Call this before starting the simulation to use the new CLI UX.
+
+    INPUT:
+      None
+    OUTPUT:
+      None
+    """
+    self.cli_mode = True
+
+    # Enable event bus
+    event_bus = get_event_bus()
+    event_bus.enable()
+
+    # Start IPC server with command handler
+    self.ipc_server = get_ipc_server()
+    self.ipc_server.set_command_handler(self._handle_cli_command)
+    self.ipc_server.start()
+
+    # Initialize execution controller
+    self.execution_controller = get_execution_controller()
+
+    # Emit simulation started event
+    emit_sim_started(
+      self.sim_code,
+      self.step,
+      self.curr_time.strftime("%B %d, %Y, %H:%M:%S"),
+      list(self.personas.keys())
+    )
+
+    print(f"[CLI Mode] Enabled - WebSocket server running on ws://localhost:8765")
+
+  def _handle_cli_command(self, cmd: str, data: dict) -> dict:
+    """
+    Handle commands from CLI client.
+
+    INPUT:
+      cmd: Command string (run, pause, resume, step, save, etc.)
+      data: Command data dictionary
+    OUTPUT:
+      Response dictionary
+    """
+    try:
+      if cmd == "run":
+        steps = data.get('steps', 1)
+        self.execution_controller.start_running(steps)
+        return {'success': True, 'message': f'Running {steps} steps'}
+
+      elif cmd == "pause":
+        if self.execution_controller.pause():
+          emit_sim_paused(self.step)
+          return {'success': True, 'message': 'Simulation paused'}
+        return {'success': False, 'message': 'Cannot pause (not running)'}
+
+      elif cmd == "resume":
+        if self.execution_controller.resume():
+          emit_sim_resumed(self.step)
+          return {'success': True, 'message': 'Simulation resumed'}
+        return {'success': False, 'message': 'Cannot resume (not paused)'}
+
+      elif cmd == "step":
+        if self.execution_controller.step():
+          return {'success': True, 'message': 'Stepping forward'}
+        return {'success': False, 'message': 'Cannot step'}
+
+      elif cmd == "save":
+        self.save()
+        return {'success': True, 'message': 'Simulation saved'}
+
+      elif cmd == "get_agent_state":
+        agent_name = data.get('agent_name')
+        if agent_name in self.personas:
+          persona = self.personas[agent_name]
+          return {
+            'success': True,
+            'agent': agent_name,
+            'state': {
+              'location': list(self.personas_tile[agent_name]),
+              'curr_time': persona.scratch.curr_time.strftime("%B %d, %Y, %H:%M:%S") if persona.scratch.curr_time else None,
+              'action': persona.scratch.act_description,
+              'action_address': persona.scratch.act_address,
+              'chatting_with': persona.scratch.chatting_with,
+            }
+          }
+        return {'success': False, 'message': f'Agent not found: {agent_name}'}
+
+      elif cmd == "get_agent_memory":
+        agent_name = data.get('agent_name')
+        memory_type = data.get('memory_type', 'event')
+        if agent_name in self.personas:
+          persona = self.personas[agent_name]
+          memories = []
+
+          if memory_type == 'event':
+            memories = persona.a_mem.get_str_seq_events().split('\n')[:50]
+          elif memory_type == 'thought':
+            memories = persona.a_mem.get_str_seq_thoughts().split('\n')[:50]
+          elif memory_type == 'chat':
+            memories = persona.a_mem.get_str_seq_chats().split('\n')[:50]
+
+          return {
+            'success': True,
+            'agent': agent_name,
+            'memory_type': memory_type,
+            'memories': [m for m in memories if m.strip()]
+          }
+        return {'success': False, 'message': f'Agent not found: {agent_name}'}
+
+      elif cmd == "get_simulation_status":
+        return {
+          'success': True,
+          'sim_code': self.sim_code,
+          'step': self.step,
+          'curr_time': self.curr_time.strftime("%B %d, %Y, %H:%M:%S"),
+          'mode': self.execution_controller.mode.value if self.execution_controller else 'stopped',
+          'personas': list(self.personas.keys()),
+          'personas_count': len(self.personas)
+        }
+
+      else:
+        return {'success': False, 'message': f'Unknown command: {cmd}'}
+
+    except Exception as e:
+      traceback.print_exc()
+      return {'success': False, 'message': f'Error: {str(e)}'}
+
+  def save(self):
     """
     Save all Reverie progress -- this includes Reverie's global state as well
-    as all the personas.  
+    as all the personas.
 
     INPUT
       None
-    OUTPUT 
+    OUTPUT
       None
       * Saves all relevant data to the designated memory directory
     """
@@ -276,36 +418,45 @@ class ReverieServer:
       time.sleep(self.server_sleep * 10)
 
 
-  def start_server(self, int_counter): 
+  def start_server(self, int_counter):
     """
-    The main backend server of Reverie. 
-    This function retrieves the environment file from the frontend to 
-    understand the state of the world, calls on each personas to make 
+    The main backend server of Reverie.
+    This function retrieves the environment file from the frontend to
+    understand the state of the world, calls on each personas to make
     decisions based on the world state, and saves their moves at certain step
-    intervals. 
+    intervals.
     INPUT
       int_counter: Integer value for the number of steps left for us to take
-                   in this iteration. 
-    OUTPUT 
+                   in this iteration.
+    OUTPUT
       None
     """
     # <sim_folder> points to the current simulation folder.
     sim_folder = f"{fs_storage}/{self.sim_code}"
 
     # When a persona arrives at a game object, we give a unique event
-    # to that object. 
+    # to that object.
     # e.g., ('double studio[...]:bed', 'is', 'unmade', 'unmade')
-    # Later on, before this cycle ends, we need to return that to its 
-    # initial state, like this: 
+    # Later on, before this cycle ends, we need to return that to its
+    # initial state, like this:
     # e.g., ('double studio[...]:bed', None, None, None)
-    # So we need to keep track of which event we added. 
-    # <game_obj_cleanup> is used for that. 
+    # So we need to keep track of which event we added.
+    # <game_obj_cleanup> is used for that.
     game_obj_cleanup = dict()
 
-    # The main while loop of Reverie. 
-    while (True): 
-      # Done with this iteration if <int_counter> reaches 0. 
-      if int_counter == 0: 
+    # The main while loop of Reverie.
+    while (True):
+      # CLI Mode: Check execution controller
+      if self.cli_mode and self.execution_controller:
+        # Wait if paused
+        self.execution_controller.wait_if_paused()
+
+        # Check if should continue
+        if not self.execution_controller.should_continue():
+          break
+
+      # Done with this iteration if <int_counter> reaches 0.
+      if int_counter == 0:
         break
 
       # <curr_env_file> file is the file that our frontend outputs. When the
@@ -370,14 +521,15 @@ class ReverieServer:
           # This is where the core brains of the personas are invoked. 
           movements = {"persona": dict(), 
                        "meta": dict()}
-          for persona_name, persona in self.personas.items(): 
+          for persona_name, persona in self.personas.items():
             # <next_tile> is a x,y coordinate. e.g., (58, 9)
             # <pronunciatio> is an emoji. e.g., "\ud83d\udca4"
-            # <description> is a string description of the movement. e.g., 
-            #   writing her next novel (editing her novel) 
+            # <description> is a string description of the movement. e.g.,
+            #   writing her next novel (editing her novel)
             #   @ double studio:double studio:common room:sofa
+            curr_tile = self.personas_tile[persona_name]
             next_tile, pronunciatio, description = persona.move(
-              self.maze, self.personas, self.personas_tile[persona_name], 
+              self.maze, self.personas, curr_tile,
               self.curr_time)
             movements["persona"][persona_name] = {}
             movements["persona"][persona_name]["movement"] = next_tile
@@ -385,6 +537,10 @@ class ReverieServer:
             movements["persona"][persona_name]["description"] = description
             movements["persona"][persona_name]["chat"] = (persona
                                                           .scratch.chat)
+
+            # CLI Mode: Emit agent moved event
+            if self.cli_mode:
+              emit_agent_moved(persona_name, curr_tile, next_tile, pronunciatio, description)
 
           # Include the meta information about the current stage in the 
           # movements dictionary. 
@@ -401,12 +557,18 @@ class ReverieServer:
           with open(curr_move_file, "w") as outfile: 
             outfile.write(json.dumps(movements, indent=2))
 
-          # After this cycle, the world takes one step forward, and the 
-          # current time moves by <sec_per_step> amount. 
+          # After this cycle, the world takes one step forward, and the
+          # current time moves by <sec_per_step> amount.
           self.step += 1
           self.curr_time += datetime.timedelta(seconds=self.sec_per_step)
 
           int_counter -= 1
+
+          # CLI Mode: Emit step event and increment controller
+          if self.cli_mode:
+            emit_sim_step(self.step, self.curr_time.strftime("%B %d, %Y, %H:%M:%S"))
+            if self.execution_controller:
+              self.execution_controller.increment_step()
           
       # Sleep so we don't burn our machines. 
       time.sleep(self.server_sleep)
