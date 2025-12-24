@@ -6,13 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a modernized fork of the "Generative Agents: Interactive Simulacra of Human Behavior" simulation framework (originally called "Reverie"). It simulates believable human behavior using LLM-powered agents that have memory, planning, and social capabilities.
 
-**Modernization Status**: Upgraded from GPT-3.5-turbo (OpenAI SDK 0.27.0) to GPT-5-nano with the Responses API (OpenAI SDK 2.5.0+), using structured outputs and minimal reasoning for cost efficiency.
+**Modernization Status**: Now supports multiple LLM backends:
+- **OpenRouter API** - Use any model via OpenRouter (default: `xiaomi/mimo-v2-flash:free`)
+- **Local Embeddings** - sentence-transformers for embeddings (no OpenAI dependency)
+- **React Dashboard** - Real-time monitoring via WebSocket
 
 ## Architecture
 
-### Two-Server Architecture
+### Three-Component Architecture
 
-The system requires two concurrent servers:
+The system has three main components:
 
 1. **Environment Server** (Django) - `environment/frontend_server/`
    - Browser-based visualization at `localhost:8000`
@@ -24,7 +27,13 @@ The system requires two concurrent servers:
    - Entry point: `reverie.py`
    - Manages agent state and progression
    - Handles all LLM interactions
-   - CLI-based control interface
+   - Includes WebSocket server for dashboard (port 8765)
+   - **IMPORTANT**: Must run from `reverie/backend_server/` directory
+
+3. **React Dashboard** (optional) - `dashboard/`
+   - Real-time monitoring at `localhost:3000`
+   - Shows agent activities, LLM logs, minimap
+   - Connects via WebSocket to simulation server
 
 ### Core Components
 
@@ -33,6 +42,7 @@ The system requires two concurrent servers:
 - Manages time progression (steps = 10 seconds game time)
 - Maintains all agent (persona) instances
 - Handles simulation forking and saving
+- Includes integrated WebSocket server for React dashboard
 
 **Persona** (`reverie/backend_server/persona/persona.py`)
 - The generative agent class (internally called "Persona" from 2022 terminology)
@@ -50,9 +60,9 @@ The system requires two concurrent servers:
 - `converse.py`: Handles agent-to-agent conversations
 
 **LLM Integration** (`reverie/backend_server/persona/prompt_template/`)
-- `gpt_structure.py`: Wrapper for OpenAI API (modernized to use Responses API)
+- `gpt_structure.py`: LLM wrapper supporting OpenRouter API
+- `embeddings.py`: Local embeddings using sentence-transformers
 - `run_gpt_prompt.py`: All prompt functions that interface with the LLM
-- Uses GPT-5-nano-2025-08-07 with minimal reasoning effort
 
 ## Environment Setup
 
@@ -61,24 +71,43 @@ The system requires two concurrent servers:
 1. **Configure API Key**:
    ```bash
    cp .env.example .env
-   # Edit .env and add your OpenAI API key
+   # Edit .env and add your OpenRouter API key:
+   # OPENROUTER_API_KEY=sk-or-v1-your-key-here
    ```
 
-2. **Create Virtual Environment**:
+2. **Create Virtual Environment** (Python 3.11 recommended):
    ```bash
-   python3 -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   # Python 3.11 is recommended - Python 3.13 has compatibility issues
+   python3.11 -m venv .venv
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
    pip install -r requirements.txt
    ```
 
-3. **Legacy Setup** (if needed):
-   Create `reverie/backend_server/utils.py` with legacy configuration (see README.md)
+3. **Create utils.py** (required, gitignored):
+   Create `reverie/backend_server/utils.py`:
+   ```python
+   import os
+   from dotenv import load_dotenv
+   load_dotenv()
+
+   openai_api_key = os.getenv("OPENROUTER_API_KEY", "")
+   maze_assets_loc = "../../environment/frontend_server/static_dirs/assets"
+   fs_storage = "../../environment/frontend_server/storage"
+   collision_block_id = "32125"
+   debug = True
+   ```
+
+4. **Install Dashboard** (optional):
+   ```bash
+   cd dashboard
+   npm install
+   ```
 
 ### Running Tests
 
 ```bash
-# Test OpenAI API integration
-python test_gpt5_nano.py
+# Test OpenRouter API integration
+python test_openrouter.py
 ```
 
 ## Running Simulations
@@ -89,15 +118,22 @@ python test_gpt5_nano.py
 ```bash
 cd environment/frontend_server
 python manage.py runserver
-# Browser: http://localhost:8000/ (should show "server is running")
+# Browser: http://localhost:8000/
 ```
 
 **Terminal 2 - Simulation Server**:
 ```bash
-cd reverie/backend_server
+cd reverie/backend_server  # IMPORTANT: Must run from this directory!
 python reverie.py
 # Enter fork simulation: base_the_ville_isabella_maria_klaus
-# Enter new simulation name: test-simulation
+# Enter new simulation name: my-test
+```
+
+**Terminal 3 - React Dashboard** (optional):
+```bash
+cd dashboard
+npm run dev
+# Browser: http://localhost:3000/
 ```
 
 ### Simulation Commands
@@ -110,7 +146,12 @@ Once both servers are running:
 - `exit`: Exit without saving
 - `fin`: Save and exit
 
-### Replay & Demo
+### Viewing Simulations
+
+**Live View**:
+```
+http://localhost:8000/simulator_home
+```
 
 **Replay** (debugging, identical sprites):
 ```
@@ -119,19 +160,60 @@ http://localhost:8000/replay/<simulation-name>/<starting-step>/
 
 **Demo** (proper sprites, requires compression):
 ```bash
-# First, compress the simulation
 cd reverie
 python compress_sim_storage.py
 # In the file, call: compress("simulation-name")
-
-# Then view at:
-# http://localhost:8000/demo/<simulation-name>/<starting-step>/<speed>
-# Speed: 1 (slowest) to 5 (fastest)
+# Then: http://localhost:8000/demo/<simulation-name>/<starting-step>/<speed>
 ```
 
-## Key Terminology Differences
+## LLM Configuration
 
-The codebase uses older internal terminology from 2022:
+### OpenRouter API
+
+The system uses OpenRouter for LLM access, allowing use of various models.
+
+**Configuration** (in `gpt_structure.py`):
+```python
+DEFAULT_MODEL = "xiaomi/mimo-v2-flash:free"  # Free tier model
+# Or use paid models: "openai/gpt-4o-mini", "anthropic/claude-3-haiku", etc.
+```
+
+**API Details**:
+- Base URL: `https://openrouter.ai/api/v1`
+- Uses Chat Completions API format
+- Free models may not support JSON schema - uses prompt-based extraction
+
+### Local Embeddings
+
+Uses sentence-transformers for embeddings instead of OpenAI:
+- Model: `all-MiniLM-L6-v2`
+- Dimension: 384 (vs 1536 for OpenAI ada-002)
+- The system handles dimension mismatch automatically in `retrieve.py`
+
+## React Dashboard
+
+The dashboard provides real-time monitoring of the simulation.
+
+### Features
+- **Agent Panel**: Current activities and status
+- **Event Log**: Simulation events in real-time
+- **LLM Log**: All LLM requests and responses
+- **Minimap**: Agent positions overlay
+
+### WebSocket Connection
+- Server: `ws://localhost:8765`
+- Sends last 50 events on reconnect
+- Event types: `sim.step`, `agent.moved`, `llm.request`, `llm.response`, etc.
+
+### Event Bus Integration
+Events are emitted via `event_bus.py` and broadcast to connected dashboards:
+```python
+from event_bus import emit_llm_request, emit_llm_response
+emit_llm_request("function_name", prompt, model)
+emit_llm_response("function_name", response, model)
+```
+
+## Key Terminology
 
 | Paper Term | Code Term |
 |------------|-----------|
@@ -139,94 +221,62 @@ The codebase uses older internal terminology from 2022:
 | Memory Stream | Associative Memory |
 | Simulation Framework | Reverie |
 
-## OpenAI API Integration
-
-### Model Configuration
-
-- **Current Model**: `gpt-5-nano-2025-08-07`
-- **API Pattern**: Responses API with minimal reasoning
-- **Cost**: $0.05 per 1M input tokens, $0.40 per 1M output tokens
-
-### Adding New LLM Prompts
-
-When adding new prompt functions in `run_gpt_prompt.py`:
-
-1. Create a `create_prompt_input()` inner function
-2. Define validation function: `def __func_validate(gpt_response, prompt="")`
-3. Define cleanup function: `def __func_clean_up(gpt_response, prompt="")`
-4. Call structured or safe generation functions:
-   - `ChatGPT_safe_generate_response()` - for JSON outputs with validation
-   - `ChatGPT_single_request()` - for simple text responses
-
-### Structured Outputs
-
-Use structured outputs for reliable JSON parsing:
-
-```python
-from gpt_structure import ChatGPT_safe_generate_response
-
-response = ChatGPT_safe_generate_response(
-    prompt=my_prompt,
-    example_output="example response",
-    special_instruction="Output format instructions",
-    repeat=3,  # retry attempts
-    func_validate=my_validator,
-    func_clean_up=my_cleanup,
-    verbose=False
-)
-```
-
-## Simulation Storage Structure
-
-```
-environment/frontend_server/storage/<sim-name>/
-├── reverie/
-│   └── meta.json           # Simulation metadata
-├── personas/
-│   └── <persona-name>/
-│       └── bootstrap_memory/
-│           ├── associative_memory/  # Memory stream (nodes.json, embeddings.json)
-│           ├── spatial_memory.json  # Location tree
-│           └── scratch.json         # Working memory
-└── movement/
-    └── <step>.json         # Agent positions per step
-```
-
-## Memory System Details
-
-### Associative Memory (Memory Stream)
-
-Stores events as `ConceptNode` objects with:
-- **Type**: event, thought, or chat
-- **SPO**: Subject-Predicate-Object triples
-- **Metadata**: created time, expiration, poignancy, keywords
-- **Embeddings**: Vector embeddings for semantic retrieval (using text-embedding-ada-002)
-
-### Retrieval Algorithm
-
-Combines three scores for memory relevance:
-1. **Recency**: Exponential decay based on time
-2. **Importance**: Poignancy score (1-10)
-3. **Relevance**: Cosine similarity of embeddings
-
 ## File Locations Reference
 
 - **Simulation control**: `reverie/backend_server/reverie.py`
 - **Agent logic**: `reverie/backend_server/persona/persona.py`
 - **LLM wrappers**: `reverie/backend_server/persona/prompt_template/gpt_structure.py`
+- **Embeddings**: `reverie/backend_server/persona/prompt_template/embeddings.py`
 - **Prompt functions**: `reverie/backend_server/persona/prompt_template/run_gpt_prompt.py`
+- **Event bus**: `reverie/backend_server/event_bus.py`
 - **Django views**: `environment/frontend_server/translator/views.py`
-- **Compression utility**: `reverie/compress_sim_storage.py`
+- **React dashboard**: `dashboard/src/`
 
 ## Security Notes
 
-- `.env` file contains API key and is gitignored
-- `reverie/backend_server/utils.py` contains legacy API key and is gitignored
-- Never commit these files or expose API keys in code
+- `.env` file contains API key - **gitignored, never commit**
+- `reverie/backend_server/utils.py` - **gitignored, never commit**
+- Never hardcode API keys in source files
+- The `.env.example` file shows required variables without actual keys
 
 ## Common Issues
 
-1. **OpenAI API rate limiting**: Save simulation frequently with `fin` command. Rate limit delays may require restart.
-2. **Simulation forking**: All simulations must fork from a base simulation (hand-crafted initial state).
-3. **Time steps**: Remember 1 step = 10 seconds. Plan accordingly for simulation duration.
-4. **Browser compatibility**: Use Chrome or Safari. Firefox may have frontend glitches.
+### Python Version
+- **Use Python 3.11** - Python 3.13 has numpy/setuptools compatibility issues
+- Create venv with: `python3.11 -m venv .venv`
+
+### Directory Issues
+- **Must run simulation from `reverie/backend_server/`** - relative paths in utils.py require this
+- If you see "No such file or directory" errors, check your working directory
+
+### Dependency Issues
+If you encounter package conflicts:
+```bash
+pip install --upgrade pip
+pip install numpy>=1.25.2,<2.0
+pip install typing-extensions>=4.11.0
+pip install Pillow>=9.1.0
+```
+
+### Tokenizer Warnings
+Suppress parallelism warnings:
+```bash
+export TOKENIZERS_PARALLELISM=false
+```
+
+### WebSocket Port Conflicts
+If port 8765 is in use:
+```bash
+lsof -ti :8765 | xargs kill -9
+```
+
+### Simulation Initialization
+- First run takes time - generates daily schedules for all agents
+- Step counter stays at 0 during initialization
+- Once schedules are generated, steps begin incrementing
+
+### Free Model Quirks
+Free OpenRouter models may:
+- Return verbose explanations instead of concise answers
+- Include markdown formatting in responses
+- The `gpt_structure.py` includes JSON extraction helpers to handle this
