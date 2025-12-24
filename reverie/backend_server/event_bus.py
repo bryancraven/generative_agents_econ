@@ -39,6 +39,10 @@ class EventType(str, Enum):
     # Agent state
     AGENT_STATE_CHANGED = "agent.state_changed"
 
+    # LLM logging events
+    LLM_REQUEST = "llm.request"
+    LLM_RESPONSE = "llm.response"
+
 
 @dataclass
 class SimulationEvent:
@@ -328,4 +332,22 @@ def emit_agent_chat_ended(agent1: str, agent2: str):
     emit_event(EventType.AGENT_CHAT_ENDED, {
         'agent1': agent1,
         'agent2': agent2
+    })
+
+
+def emit_llm_request(function_name: str, prompt: str, model: str):
+    """Emit LLM request event for dashboard logging"""
+    emit_event(EventType.LLM_REQUEST, {
+        'function': function_name,
+        'prompt': prompt[:2000] if prompt else '',  # Truncate for performance
+        'model': model
+    })
+
+
+def emit_llm_response(function_name: str, response: str, model: str):
+    """Emit LLM response event for dashboard logging"""
+    emit_event(EventType.LLM_RESPONSE, {
+        'function': function_name,
+        'response': response[:2000] if response else '',  # Truncate for performance
+        'model': model
     })

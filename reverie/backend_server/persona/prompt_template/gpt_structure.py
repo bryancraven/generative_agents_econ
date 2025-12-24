@@ -1,26 +1,120 @@
 """
 Author: Joon Sung Park (joonspk@stanford.edu)
-Updated: Modernized for OpenAI API v1+ with Responses API and Structured Outputs
+Updated: Adapted for OpenRouter API with xiaomi/mimo-v2-flash:free model
 
 File: gpt_structure.py
-Description: Wrapper functions for calling OpenAI APIs using modern patterns.
+Description: Wrapper functions for calling LLM APIs via OpenRouter.
 """
 import json
 import os
+import re
 import time
 from typing import Optional, Callable, Any
 from pydantic import BaseModel
 from openai import OpenAI
 from dotenv import load_dotenv
 
+# Try to import LLM logging (only available when event bus is enabled)
+try:
+    from event_bus import emit_llm_request, emit_llm_response
+    LLM_LOGGING_ENABLED = True
+except ImportError:
+    LLM_LOGGING_ENABLED = False
+    def emit_llm_request(*args, **kwargs): pass
+    def emit_llm_response(*args, **kwargs): pass
+
 # Load environment variables from .env file
 load_dotenv()
 
-# Initialize OpenAI client with API key from environment
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Initialize OpenRouter client (OpenAI-compatible API)
+client = OpenAI(
+    api_key=os.getenv("OPENROUTER_API_KEY"),
+    base_url="https://openrouter.ai/api/v1"
+)
 
-# Use GPT-5-nano for maximum cost efficiency (cheapest model available)
-DEFAULT_MODEL = "gpt-5-nano-2025-08-07"
+# Use xiaomi/mimo-v2-flash:free - fast, free model via OpenRouter
+DEFAULT_MODEL = "xiaomi/mimo-v2-flash:free"
+
+
+# ============================================================================
+# #####################[SECTION 0: JSON EXTRACTION HELPERS] ##################
+# ============================================================================
+
+def _schema_to_example(schema: dict) -> str:
+    """
+    Convert JSON schema to example JSON string for prompt engineering.
+    Used when the model doesn't support native JSON schema output.
+    """
+    def build_example(s):
+        if isinstance(s, dict):
+            if s.get("type") == "object":
+                props = s.get("properties", {})
+                return {k: build_example(v) for k, v in props.items()}
+            elif s.get("type") == "array":
+                items = s.get("items", {"type": "string"})
+                return [build_example(items)]
+            elif s.get("type") == "string":
+                return "example_string"
+            elif s.get("type") == "integer":
+                return 0
+            elif s.get("type") == "number":
+                return 0.0
+            elif s.get("type") == "boolean":
+                return True
+        return "value"
+
+    example = build_example(schema)
+    return json.dumps(example, indent=2)
+
+
+def _extract_json_from_response(text: str) -> str:
+    """
+    Extract JSON from response text, handling markdown code blocks.
+    """
+    if not text:
+        return "{}"
+
+    text = text.strip()
+
+    # Remove markdown code blocks
+    if "```json" in text:
+        match = re.search(r"```json\s*([\s\S]*?)\s*```", text)
+        if match:
+            text = match.group(1)
+    elif "```" in text:
+        match = re.search(r"```\s*([\s\S]*?)\s*```", text)
+        if match:
+            text = match.group(1)
+
+    # Find JSON object or array boundaries
+    text = text.strip()
+
+    # Try to find JSON object
+    if "{" in text:
+        start = text.find("{")
+        # Find matching closing brace
+        depth = 0
+        for i, c in enumerate(text[start:], start):
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start:i+1]
+
+    # Try to find JSON array
+    if "[" in text:
+        start = text.find("[")
+        depth = 0
+        for i, c in enumerate(text[start:], start):
+            if c == "[":
+                depth += 1
+            elif c == "]":
+                depth -= 1
+                if depth == 0:
+                    return text[start:i+1]
+
+    return text
 
 
 def temp_sleep(seconds=0.1):
@@ -48,7 +142,7 @@ class ChatResponse(BaseModel):
 
 def ChatGPT_single_request(prompt: str) -> str:
     """
-    Simple single request to GPT-5-nano using Responses API with minimal reasoning.
+    Simple single request using Chat Completions API via OpenRouter.
 
     Args:
         prompt: User prompt string
@@ -59,13 +153,18 @@ def ChatGPT_single_request(prompt: str) -> str:
     temp_sleep()
 
     try:
-        response = client.responses.create(
+        emit_llm_request("ChatGPT_single_request", prompt, DEFAULT_MODEL)
+
+        response = client.chat.completions.create(
             model=DEFAULT_MODEL,
-            input=prompt,
-            reasoning={"effort": "minimal"},
-            text={"verbosity": "low"}
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=1000
         )
-        return response.output_text
+        result = response.choices[0].message.content
+
+        emit_llm_response("ChatGPT_single_request", result, DEFAULT_MODEL)
+        return result
     except Exception as e:
         print(f"ChatGPT ERROR: {e}")
         return "ChatGPT ERROR"
@@ -73,8 +172,8 @@ def ChatGPT_single_request(prompt: str) -> str:
 
 def GPT4_request(prompt: str) -> str:
     """
-    Request using GPT-5-nano with minimal reasoning effort via Responses API.
-    Uses minimal reasoning for maximum cost efficiency.
+    Request using Chat Completions API via OpenRouter.
+    Legacy function name maintained for compatibility.
 
     Args:
         prompt: User prompt string
@@ -85,13 +184,18 @@ def GPT4_request(prompt: str) -> str:
     temp_sleep()
 
     try:
-        response = client.responses.create(
+        emit_llm_request("GPT4_request", prompt, DEFAULT_MODEL)
+
+        response = client.chat.completions.create(
             model=DEFAULT_MODEL,
-            input=prompt,
-            reasoning={"effort": "minimal"},
-            text={"verbosity": "low"}
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=1000
         )
-        return response.output_text
+        result = response.choices[0].message.content
+
+        emit_llm_response("GPT4_request", result, DEFAULT_MODEL)
+        return result
 
     except Exception as e:
         print(f"ChatGPT ERROR: {e}")
@@ -100,7 +204,7 @@ def GPT4_request(prompt: str) -> str:
 
 def ChatGPT_request(prompt: str) -> str:
     """
-    Standard request to GPT-5-nano using Responses API with minimal reasoning.
+    Standard request using Chat Completions API via OpenRouter.
 
     Args:
         prompt: User prompt string
@@ -109,13 +213,18 @@ def ChatGPT_request(prompt: str) -> str:
         Response content as string
     """
     try:
-        response = client.responses.create(
+        emit_llm_request("ChatGPT_request", prompt, DEFAULT_MODEL)
+
+        response = client.chat.completions.create(
             model=DEFAULT_MODEL,
-            input=prompt,
-            reasoning={"effort": "minimal"},
-            text={"verbosity": "low"}
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=1000
         )
-        return response.output_text
+        result = response.choices[0].message.content
+
+        emit_llm_response("ChatGPT_request", result, DEFAULT_MODEL)
+        return result
 
     except Exception as e:
         print(f"ChatGPT ERROR: {e}")
@@ -124,40 +233,45 @@ def ChatGPT_request(prompt: str) -> str:
 
 def ChatGPT_structured_request(prompt: str, response_format: dict = None) -> str:
     """
-    Request with structured JSON output using Responses API with minimal reasoning.
+    Request with JSON output using prompt engineering via OpenRouter.
+    Uses prompt-based JSON extraction since free models don't support JSON schema.
 
     Args:
         prompt: User prompt string
-        response_format: JSON schema for structured output (simplified schema dict)
+        response_format: JSON schema for structured output (used to generate example)
 
     Returns:
         Response content as string (JSON)
     """
     try:
-        text_config = {
-            "verbosity": "low"
-        }
-
-        # Add structured output format if provided
+        # Build prompt with JSON instruction
+        json_prompt = prompt
         if response_format:
-            text_config["format"] = {
-                "type": "json_schema",
-                "name": "response_output",
-                "schema": response_format,
-                "strict": True
-            }
+            example = _schema_to_example(response_format)
+            json_prompt += f"\n\nYou MUST respond with valid JSON in exactly this format:\n{example}\n\nRespond with ONLY the JSON, no other text or explanation."
 
-        response = client.responses.create(
+        response = client.chat.completions.create(
             model=DEFAULT_MODEL,
-            input=prompt,
-            reasoning={"effort": "minimal"},
-            text=text_config
+            messages=[{"role": "user", "content": json_prompt}],
+            temperature=0.3,  # Lower temp for more deterministic JSON
+            max_tokens=2000
         )
-        return response.output_text
 
+        result = response.choices[0].message.content
+
+        # Extract JSON from response (handle markdown code blocks)
+        result = _extract_json_from_response(result)
+
+        # Validate it's parseable JSON
+        json.loads(result)
+        return result
+
+    except json.JSONDecodeError as e:
+        print(f"ChatGPT Structured JSON Parse ERROR: {e}")
+        return '{"output": "error"}'
     except Exception as e:
         print(f"ChatGPT Structured ERROR: {e}")
-        return "ChatGPT ERROR"
+        return '{"output": "error"}'
 
 
 def GPT4_safe_generate_response(
@@ -349,7 +463,7 @@ def ChatGPT_safe_generate_response_OLD(
 
 def GPT_request(prompt: str, gpt_parameter: dict) -> str:
     """
-    Legacy completion request converted to use Responses API with minimal reasoning.
+    Legacy completion request using Chat Completions API via OpenRouter.
 
     Args:
         prompt: The prompt string
@@ -360,17 +474,16 @@ def GPT_request(prompt: str, gpt_parameter: dict) -> str:
     """
     temp_sleep()
     try:
-        # Responses API requires minimum 16 tokens
         max_tokens = max(16, gpt_parameter.get("max_tokens", 150))
+        temperature = gpt_parameter.get("temperature", 0.7)
 
-        response = client.responses.create(
-            model=DEFAULT_MODEL,  # Use GPT-5-nano
-            input=prompt,
-            reasoning={"effort": "minimal"},
-            text={"verbosity": "low"},
-            max_output_tokens=max_tokens
+        response = client.chat.completions.create(
+            model=DEFAULT_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=temperature,
+            max_tokens=max_tokens
         )
-        return response.output_text
+        return response.choices[0].message.content
     except Exception as e:
         print(f"TOKEN LIMIT EXCEEDED: {e}")
         return "TOKEN LIMIT EXCEEDED"
@@ -445,28 +558,29 @@ def safe_generate_response(
     return fail_safe_response
 
 
-def get_embedding(text: str, model: str = "text-embedding-ada-002") -> list:
+def get_embedding(text: str, model: str = None) -> list:
     """
-    Get text embedding using OpenAI's embedding model.
-    Updated to use modern client API.
+    Get text embedding using local sentence-transformers model.
+    Uses all-MiniLM-L6-v2 for 384-dimensional embeddings.
 
     Args:
         text: Text to embed
-        model: Embedding model to use
+        model: Ignored (kept for backward compatibility)
 
     Returns:
-        Embedding vector as list of floats
+        Embedding vector as list of floats (384 dimensions)
     """
-    text = text.replace("\n", " ")
-    if not text:
-        text = "this is blank"
-
     try:
-        response = client.embeddings.create(
-            input=[text],
-            model=model
-        )
-        return response.data[0].embedding
+        from persona.prompt_template.embeddings import get_embedding as local_get_embedding
+        return local_get_embedding(text)
+    except ImportError:
+        # Fallback: try relative import
+        try:
+            from embeddings import get_embedding as local_get_embedding
+            return local_get_embedding(text)
+        except ImportError:
+            print("Embedding ERROR: sentence-transformers not installed")
+            return []
     except Exception as e:
         print(f"Embedding ERROR: {e}")
         return []

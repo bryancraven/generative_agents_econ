@@ -172,26 +172,53 @@ def extract_importance(persona, nodes):
   return importance_out
 
 
-def extract_relevance(persona, nodes, focal_pt): 
+def extract_relevance(persona, nodes, focal_pt):
   """
-  Gets the current Persona object, a list of nodes that are in a 
-  chronological order, and the focal_pt string and outputs a dictionary 
+  Gets the current Persona object, a list of nodes that are in a
+  chronological order, and the focal_pt string and outputs a dictionary
   that has the relevance score calculated.
 
-  INPUT: 
-    persona: Current persona whose memory we are retrieving. 
-    nodes: A list of Node object in a chronological order. 
-    focal_pt: A string describing the current thought of revent of focus.  
-  OUTPUT: 
+  INPUT:
+    persona: Current persona whose memory we are retrieving.
+    nodes: A list of Node object in a chronological order.
+    focal_pt: A string describing the current thought of revent of focus.
+  OUTPUT:
     relevance_out: A dictionary whose keys are the node.node_id and whose values
-                 are the float that represents the relevance score. 
+                 are the float that represents the relevance score.
   """
   focal_embedding = get_embedding(focal_pt)
+  focal_dim = len(focal_embedding) if focal_embedding else 0
 
   relevance_out = dict()
-  for count, node in enumerate(nodes): 
-    node_embedding = persona.a_mem.embeddings[node.embedding_key]
-    relevance_out[node.node_id] = cos_sim(node_embedding, focal_embedding)
+  for count, node in enumerate(nodes):
+    node_embedding = persona.a_mem.embeddings.get(node.embedding_key, [])
+
+    # Handle missing or empty embeddings
+    if not node_embedding:
+      relevance_out[node.node_id] = 0.0
+      continue
+
+    node_dim = len(node_embedding)
+
+    # Handle dimension mismatch (old 1536-dim vs new 384-dim embeddings)
+    if node_dim != focal_dim and focal_dim > 0:
+      # Re-embed the node using current model if dimensions don't match
+      if hasattr(node, 'description') and node.description:
+        node_embedding = get_embedding(node.description)
+        # Update cached embedding for future use
+        persona.a_mem.embeddings[node.embedding_key] = node_embedding
+      elif hasattr(node, 'embedding_str') and node.embedding_str:
+        node_embedding = get_embedding(node.embedding_str)
+        persona.a_mem.embeddings[node.embedding_key] = node_embedding
+      else:
+        relevance_out[node.node_id] = 0.0
+        continue
+
+    try:
+      relevance_out[node.node_id] = cos_sim(node_embedding, focal_embedding)
+    except Exception as e:
+      # Fallback to 0 if cosine similarity fails
+      relevance_out[node.node_id] = 0.0
 
   return relevance_out
 
