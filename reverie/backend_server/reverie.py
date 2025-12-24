@@ -43,6 +43,83 @@ from event_bus import (
 from ipc_server import get_ipc_server
 from cli_mode import get_execution_controller, ExecutionMode
 
+# WebSocket server for React dashboard
+import threading
+import asyncio
+
+_ws_broadcast_queue = []
+_ws_loop = None
+_ws_clients = set()
+
+def start_websocket_server_thread():
+    """Start the WebSocket server in a background thread."""
+    global _ws_loop, _ws_clients
+
+    # Set up event listener FIRST (in main thread, before server starts)
+    from event_bus import get_event_bus
+    event_bus = get_event_bus()
+
+    def on_any_event(event):
+        """Handle any event from the event bus"""
+        msg = {"type": event.type.value, "data": event.data, "timestamp": event.timestamp}
+        if _ws_loop and _ws_clients:
+            asyncio.run_coroutine_threadsafe(_broadcast(msg), _ws_loop)
+
+    event_bus.on(None, on_any_event)
+    print("[WebSocket] Event listener registered")
+
+    def run_server():
+        global _ws_loop, _ws_clients
+        import websockets
+        import json
+
+        _ws_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_ws_loop)
+
+        async def _broadcast(message):
+            if _ws_clients:
+                message_str = json.dumps(message, default=str)
+                await asyncio.gather(
+                    *[client.send(message_str) for client in _ws_clients],
+                    return_exceptions=True
+                )
+
+        # Make broadcast available globally
+        globals()['_broadcast'] = _broadcast
+
+        async def handler(websocket, path):
+            _ws_clients.add(websocket)
+            print(f"[WebSocket] Dashboard connected. Clients: {len(_ws_clients)}")
+            try:
+                await websocket.send(json.dumps({"type": "CONNECTED"}))
+
+                # Send recent events to new client
+                from event_bus import get_event_bus
+                recent = get_event_bus().get_recent_events(50)
+                for event in reversed(recent):  # Send oldest first
+                    msg = {"type": event.type.value, "data": event.data, "timestamp": event.timestamp}
+                    await websocket.send(json.dumps(msg, default=str))
+
+                async for message in websocket:
+                    pass
+            except:
+                pass
+            finally:
+                _ws_clients.discard(websocket)
+                print(f"[WebSocket] Dashboard disconnected. Clients: {len(_ws_clients)}")
+
+        async def main():
+            print("[WebSocket] Server starting on ws://localhost:8765")
+            async with websockets.serve(handler, "localhost", 8765):
+                await asyncio.Future()
+
+        _ws_loop.run_until_complete(main())
+
+    thread = threading.Thread(target=run_server, daemon=True)
+    thread.start()
+    time.sleep(0.5)  # Give server time to start
+    print("[WebSocket] Background thread started")
+
 ##############################################################################
 #                                  REVERIE                                   #
 ##############################################################################
@@ -766,6 +843,9 @@ if __name__ == '__main__':
   # rs = ReverieServer("July1_the_ville_isabella_maria_klaus-step-3-20", 
   #                    "July1_the_ville_isabella_maria_klaus-step-3-21")
   # rs.open_server()
+
+  # Start WebSocket server for React dashboard
+  start_websocket_server_thread()
 
   origin = input("Enter the name of the forked simulation: ").strip()
   target = input("Enter the name of the new simulation: ").strip()
