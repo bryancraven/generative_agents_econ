@@ -33,7 +33,7 @@ client = OpenAI(
 )
 
 # Use xiaomi/mimo-v2-flash:free - fast, free model via OpenRouter
-DEFAULT_MODEL = "xiaomi/mimo-v2-flash:free"
+DEFAULT_MODEL = "xiaomi/mimo-v2-flash:free"  # Best free model for this task
 
 
 # ============================================================================

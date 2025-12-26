@@ -9,19 +9,24 @@ Model: all-MiniLM-L6-v2
 """
 import numpy as np
 from typing import List, Optional
+import threading
 
-# Lazy-load model to avoid slow startup
+# Lazy-load model to avoid slow startup (thread-safe)
 _model = None
+_model_lock = threading.Lock()
 
 
 def get_model():
-    """Get or initialize the embedding model (lazy loading)."""
+    """Get or initialize the embedding model (lazy loading, thread-safe)."""
     global _model
     if _model is None:
-        print("[Embeddings] Loading all-MiniLM-L6-v2 model...")
-        from sentence_transformers import SentenceTransformer
-        _model = SentenceTransformer('all-MiniLM-L6-v2')
-        print("[Embeddings] Model loaded successfully.")
+        with _model_lock:
+            # Double-check after acquiring lock
+            if _model is None:
+                print("[Embeddings] Loading all-MiniLM-L6-v2 model...")
+                from sentence_transformers import SentenceTransformer
+                _model = SentenceTransformer('all-MiniLM-L6-v2')
+                print("[Embeddings] Model loaded successfully.")
     return _model
 
 

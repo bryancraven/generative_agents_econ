@@ -595,29 +595,36 @@ class ReverieServer:
           # Then we need to actually have each of the personas perceive and
           # move. The movement for each of the personas comes in the form of
           # x y coordinates where the persona will move towards. e.g., (50, 34)
-          # This is where the core brains of the personas are invoked. 
-          movements = {"persona": dict(), 
+          # This is where the core brains of the personas are invoked.
+          movements = {"persona": dict(),
                        "meta": dict()}
-          for persona_name, persona in self.personas.items():
-            # <next_tile> is a x,y coordinate. e.g., (58, 9)
-            # <pronunciatio> is an emoji. e.g., "\ud83d\udca4"
-            # <description> is a string description of the movement. e.g.,
-            #   writing her next novel (editing her novel)
-            #   @ double studio:double studio:common room:sofa
+
+          # Use parallel processing for persona moves (especially helps on first day init)
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+
+          def process_persona(persona_name, persona):
             curr_tile = self.personas_tile[persona_name]
             next_tile, pronunciatio, description = persona.move(
               self.maze, self.personas, curr_tile,
               self.curr_time)
-            movements["persona"][persona_name] = {}
-            movements["persona"][persona_name]["movement"] = next_tile
-            movements["persona"][persona_name]["pronunciatio"] = pronunciatio
-            movements["persona"][persona_name]["description"] = description
-            movements["persona"][persona_name]["chat"] = (persona
-                                                          .scratch.chat)
+            return persona_name, curr_tile, next_tile, pronunciatio, description, persona.scratch.chat
 
-            # CLI Mode: Emit agent moved event
-            if self.cli_mode:
-              emit_agent_moved(persona_name, curr_tile, next_tile, pronunciatio, description)
+          # Run persona moves in parallel (3 workers for 3 agents)
+          with ThreadPoolExecutor(max_workers=len(self.personas)) as executor:
+            futures = {executor.submit(process_persona, pn, p): pn
+                      for pn, p in self.personas.items()}
+
+            for future in as_completed(futures):
+              persona_name, curr_tile, next_tile, pronunciatio, description, chat = future.result()
+              movements["persona"][persona_name] = {}
+              movements["persona"][persona_name]["movement"] = next_tile
+              movements["persona"][persona_name]["pronunciatio"] = pronunciatio
+              movements["persona"][persona_name]["description"] = description
+              movements["persona"][persona_name]["chat"] = chat
+
+              # CLI Mode: Emit agent moved event
+              if self.cli_mode:
+                emit_agent_moved(persona_name, curr_tile, next_tile, pronunciatio, description)
 
           # Include the meta information about the current stage in the 
           # movements dictionary. 
